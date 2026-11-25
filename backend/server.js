@@ -13,6 +13,15 @@ app.use(cors());
 // Parse JSON body từ request
 app.use(express.json());
 
+// Route gốc kiểm tra nhanh khi mở domain host
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Bơ Photo Studio Backend API đang hoạt động!',
+    health: '/api/health',
+  });
+});
+
 // Gắn toàn bộ router API vào tiền tố /api
 app.use('/api', apiRoutes);
 
