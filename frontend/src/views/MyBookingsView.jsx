@@ -53,10 +53,10 @@ export default function MyBookingsView({ setActiveView, onOpenAlbum }) {
       ]);
 
       if (bookingsRes.success && bookingsRes.data) {
-        setBookings(bookingsRes.data);
+        setBookings(Array.isArray(bookingsRes.data) ? bookingsRes.data : []);
       }
       if (vouchersRes.success && vouchersRes.data) {
-        setVouchers(vouchersRes.data);
+        setVouchers(Array.isArray(vouchersRes.data) ? vouchersRes.data : []);
       }
     } catch (err) {
       console.error('Lỗi tải đơn của tôi:', err);

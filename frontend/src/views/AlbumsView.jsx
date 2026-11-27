@@ -35,12 +35,13 @@ export default function AlbumsView({ initialBookingId }) {
       try {
         const res = await albumApi.getMyAlbums();
         if (res.success && res.data) {
-          setAlbums(res.data);
-          if (res.data.length > 0) {
-            // Find by initialBookingId if provided
+          const list = Array.isArray(res.data) ? res.data : [];
+          setAlbums(list);
+          if (list.length > 0) {
+            // Tìm theo initialBookingId nếu có truyền vào
             const target = initialBookingId
-              ? res.data.find((a) => a.don_dat_lich_id === initialBookingId) || res.data[0]
-              : res.data[0];
+              ? list.find((a) => a.don_dat_lich_id === initialBookingId) || list[0]
+              : list[0];
             loadAlbumDetail(target.don_dat_lich_id || target.id);
           }
         }

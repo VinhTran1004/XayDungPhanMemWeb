@@ -14,8 +14,8 @@ export default function PricingView({ setActiveView }) {
           catalogApi.getPackages(),
           catalogApi.getAddons(),
         ]);
-        if (pkgRes.success) setPackages(pkgRes.data);
-        if (addonRes.success) setAddons(addonRes.data);
+        if (pkgRes.success) setPackages(Array.isArray(pkgRes.data) ? pkgRes.data : []);
+        if (addonRes.success) setAddons(Array.isArray(addonRes.data) ? addonRes.data : []);
       } catch (err) {
         console.error('Lỗi tải bảng giá:', err);
       } finally {

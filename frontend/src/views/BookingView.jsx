@@ -139,10 +139,14 @@ export default function BookingView({
       try {
         const res = await bookingApi.checkAvailability(ngayChup, selectedConcept.id);
         if (res.success && res.data) {
-          setAvailabilityList(res.data);
+          // ⚠️ QUAN TRỌNG: Backend trả về object { ngay_chup, concept, tong_nhiep_anh_gia, slots: [...] }
+          // Cần lấy đúng mảng res.data.slots để tránh lỗi availabilityList.map is not a function
+          const slots = res.data.slots || (Array.isArray(res.data) ? res.data : []);
+          setAvailabilityList(slots);
         }
       } catch (err) {
         console.warn('Lỗi kiểm tra ca trống:', err.message);
+        setAvailabilityList([]);
       } finally {
         setLoadingAvailability(false);
       }
@@ -525,7 +529,7 @@ export default function BookingView({
               </div>
             ) : (
               <div className="time-slots-grid">
-                {availabilityList.map((slot) => {
+                {(Array.isArray(availabilityList) ? availabilityList : []).map((slot) => {
                   const isAvailable = slot.kha_dung;
                   const isSelected = selectedSlot?.khung_gio_id === slot.khung_gio_id;
 

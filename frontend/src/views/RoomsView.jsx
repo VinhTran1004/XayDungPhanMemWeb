@@ -11,7 +11,7 @@ export default function RoomsView({ setActiveView }) {
       try {
         const res = await catalogApi.getRooms();
         if (res.success && res.data) {
-          setRooms(res.data);
+          setRooms(Array.isArray(res.data) ? res.data : []);
         }
       } catch (err) {
         console.error('Lỗi tải danh sách phòng:', err);

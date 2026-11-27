@@ -23,13 +23,13 @@ export default function ConceptsView({ onSelectConcept, onOpenConceptDetail }) {
         ]);
 
         if (conceptsRes.success && conceptsRes.data) {
-          setConcepts(conceptsRes.data);
+          setConcepts(Array.isArray(conceptsRes.data) ? conceptsRes.data : []);
         }
         if (catRes.success && catRes.data) {
-          setCategories(catRes.data);
+          setCategories(Array.isArray(catRes.data) ? catRes.data : []);
         }
         if (roomsRes.success && roomsRes.data) {
-          setRooms(roomsRes.data);
+          setRooms(Array.isArray(roomsRes.data) ? roomsRes.data : []);
         }
       } catch (err) {
         console.error('Lỗi tải danh sách concept:', err);
@@ -41,7 +41,7 @@ export default function ConceptsView({ onSelectConcept, onOpenConceptDetail }) {
   }, []);
 
   // Filter logic
-  const filteredConcepts = concepts.filter((c) => {
+  const filteredConcepts = (Array.isArray(concepts) ? concepts : []).filter((c) => {
     const matchCat =
       selectedCategory === 'all' ||
       c.danh_muc_id === Number(selectedCategory) ||

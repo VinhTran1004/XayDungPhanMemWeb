@@ -49,8 +49,8 @@ export default function AdminView({ setActiveView }) {
       ]);
 
       if (statsRes.success) setStats(statsRes.data);
-      if (bookingsRes.success) setBookings(bookingsRes.data);
-      if (photographersRes.success) setPhotographers(photographersRes.data);
+      if (bookingsRes.success) setBookings(Array.isArray(bookingsRes.data) ? bookingsRes.data : []);
+      if (photographersRes.success) setPhotographers(Array.isArray(photographersRes.data) ? photographersRes.data : []);
     } catch (err) {
       showToast(err.message || 'Lỗi tải dữ liệu quản trị', 'error');
     } finally {
