@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   ChevronRight,
   ShieldAlert,
+  CreditCard,
+  Copy,
 } from 'lucide-react';
 
 export default function MyBookingsView({ setActiveView, onOpenAlbum }) {
@@ -39,6 +41,41 @@ export default function MyBookingsView({ setActiveView, onOpenAlbum }) {
     booking: null,
     phuongAn: 'voucher_100', // 'voucher_100' | 'hoan_tien_50'
   });
+
+  // Pay Deposit Modal (Tiếp tục thanh toán cọc cho đơn đang chờ)
+  const [payModal, setPayModal] = useState({
+    open: false,
+    booking: null,
+    loading: false,
+  });
+
+  // Sao chép nội dung vào Clipboard
+  const copyToClipboard = (text, label) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    showToast(`Đã sao chép ${label}!`, 'info');
+  };
+
+  // Xác nhận chuyển khoản cọc 30% trực tiếp từ trang Lịch Hẹn
+  const handleConfirmPayDeposit = async () => {
+    if (!payModal.booking) return;
+    setPayModal((prev) => ({ ...prev, loading: true }));
+    try {
+      const res = await bookingApi.payDeposit(payModal.booking.id, {
+        hinh_thuc: 'chuyen_khoan',
+        ma_giao_dich: `TXN_${Date.now()}`,
+      });
+
+      if (res.success) {
+        showToast('Xác nhận đặt cọc 30% thành công! Chúc bạn có buổi chụp ảnh tuyệt vời.', 'success');
+        setPayModal({ open: false, booking: null, loading: false });
+        loadData();
+      }
+    } catch (err) {
+      showToast(err.message || 'Lỗi xác nhận thanh toán cọc', 'error');
+      setPayModal((prev) => ({ ...prev, loading: false }));
+    }
+  };
 
   const loadData = async () => {
     if (!user) {
@@ -255,6 +292,22 @@ export default function MyBookingsView({ setActiveView, onOpenAlbum }) {
                     </button>
                   )}
 
+                  {/* Nút Tiếp Tục Đặt Cọc khi đơn đang ở trạng thái 'cho_thanh_toan_coc' */}
+                  {booking.trang_thai_don === 'cho_thanh_toan_coc' && (
+                    <button
+                      className="btn-primary btn-sm"
+                      onClick={() =>
+                        setPayModal({
+                          open: true,
+                          booking,
+                          loading: false,
+                        })
+                      }
+                    >
+                      <CreditCard size={14} /> Tiếp Tục Đặt Cọc
+                    </button>
+                  )}
+
                   {/* Reschedule button (if allowed) */}
                   {['da_coc', 'da_phan_cong'].includes(booking.trang_thai_don) && (
                     <button
@@ -447,6 +500,152 @@ export default function MyBookingsView({ setActiveView, onOpenAlbum }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* PAY DEPOSIT MODAL - VIETQR */}
+      {payModal.open && payModal.booking && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setPayModal({ open: false, booking: null, loading: false })}
+        >
+          <div
+            className="modal-content payment-modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '640px' }}
+          >
+            <h3 className="font-serif" style={{ marginBottom: '8px', textAlign: 'center' }}>
+              Quét Mã VietQR Đặt Cọc 30%
+            </h3>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '20px', textAlign: 'center' }}>
+              Quý khách vui lòng quét mã QR hoặc chuyển khoản đúng nội dung để hoàn tất giữ chỗ.
+            </p>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                gap: '24px',
+                alignItems: 'center',
+              }}
+            >
+              <div
+                style={{
+                  textAlign: 'center',
+                  background: '#ffffff',
+                  padding: '16px',
+                  borderRadius: '12px',
+                  border: '1px solid var(--border-color)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+                }}
+              >
+                <img
+                  src={`https://img.vietqr.io/image/MB-0123456789-compact2.png?amount=${payModal.booking.tien_coc}&addInfo=${payModal.booking.ma_don}&accountName=BO%20PHOTO%20STUDIO`}
+                  alt="VietQR MB Bank"
+                  style={{ width: '100%', maxWidth: '210px', borderRadius: '8px' }}
+                />
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                  Tự động nhận diện số tiền & nội dung
+                </div>
+              </div>
+
+              <div className="transfer-details" style={{ gap: '10px' }}>
+                <div className="detail-row">
+                  <span className="detail-label">Mã Đơn:</span>
+                  <div className="detail-value-box">
+                    <strong>{payModal.booking.ma_don}</strong>
+                    <button
+                      className="btn-copy"
+                      type="button"
+                      onClick={() => copyToClipboard(payModal.booking.ma_don, 'Mã đơn')}
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Ngân Hàng:</span>
+                  <div className="detail-value-box">
+                    <span>MB Bank</span>
+                  </div>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Số Tài Khoản:</span>
+                  <div className="detail-value-box">
+                    <strong>0123456789</strong>
+                    <button
+                      className="btn-copy"
+                      type="button"
+                      onClick={() => copyToClipboard('0123456789', 'Số tài khoản')}
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Chủ Tài Khoản:</span>
+                  <div className="detail-value-box">
+                    <span>BO PHOTO STUDIO</span>
+                  </div>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Số Tiền Cọc (30%):</span>
+                  <div className="detail-value-box">
+                    <strong style={{ color: 'var(--gold-primary)', fontSize: '1.05rem' }}>
+                      {new Intl.NumberFormat('vi-VN').format(payModal.booking.tien_coc)} VNĐ
+                    </strong>
+                    <button
+                      className="btn-copy"
+                      type="button"
+                      onClick={() =>
+                        copyToClipboard(payModal.booking.tien_coc?.toString(), 'Số tiền cọc')
+                      }
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="detail-row">
+                  <span className="detail-label">Nội Dung CK:</span>
+                  <div className="detail-value-box">
+                    <strong style={{ color: 'var(--gold-primary)' }}>{payModal.booking.ma_don}</strong>
+                    <button
+                      className="btn-copy"
+                      type="button"
+                      onClick={() => copyToClipboard(payModal.booking.ma_don, 'Nội dung chuyển khoản')}
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => setPayModal({ open: false, booking: null, loading: false })}
+                disabled={payModal.loading}
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ flex: 2 }}
+                onClick={handleConfirmPayDeposit}
+                disabled={payModal.loading}
+              >
+                {payModal.loading ? 'Đang xác nhận...' : '✓ Tôi Đã Chuyển Khoản Đặt Cọc Xong'}
+              </button>
+            </div>
           </div>
         </div>
       )}
