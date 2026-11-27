@@ -16,11 +16,11 @@
   --border-medium: #dcd0c0;
   --border-gold: #c29567;
 
-  /* Tone màu nâu đất ấm & caramel gỗ mộc đặc trưng của Gạo Nâu */
-  --gold-primary: #8f5d2f;
-  --gold-light: #b07b46;
-  --gold-dark: #6e431d;
-  --gold-glow: rgba(143, 93, 47, 0.15);
+  /* Tone màu xanh quả bơ đặc trưng Bơ Photo Studio (Avocado Forest Green & Linen Cream) */
+  --gold-primary: #355328;
+  --gold-light: #4b743a;
+  --gold-dark: #223819;
+  --gold-glow: rgba(53, 83, 40, 0.18);
 
   --emerald-success: #15803d;
   --rose-accent: #be123c;

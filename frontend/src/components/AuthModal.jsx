@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { X, Lock, Mail, User, Phone, Sparkles, ShieldCheck } from 'lucide-react';
 
-export default function AuthModal() {
+export default function AuthModal({ onAdminLogin }) {
   const {
     isAuthModalOpen,
     closeAuthModal,
@@ -27,7 +27,10 @@ export default function AuthModal() {
     setLoading(true);
     try {
       if (authModalTab === 'login') {
-        await login(email, matKhau);
+        const res = await login(email, matKhau);
+        if (res?.user?.vai_tro === 'quan_tri_vien' && onAdminLogin) {
+          onAdminLogin();
+        }
       } else {
         await register({
           ho_ten: hoTen,
@@ -48,7 +51,10 @@ export default function AuthModal() {
     setMatKhau(presetPass);
     setLoading(true);
     try {
-      await login(presetEmail, presetPass);
+      const res = await login(presetEmail, presetPass);
+      if (res?.user?.vai_tro === 'quan_tri_vien' && onAdminLogin) {
+        onAdminLogin();
+      }
     } finally {
       setLoading(false);
     }

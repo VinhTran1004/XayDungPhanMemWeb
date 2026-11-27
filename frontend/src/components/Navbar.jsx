@@ -8,8 +8,6 @@ import {
   Shield,
   Image,
   FolderKanban,
-  Menu,
-  X,
   ChevronDown,
   Sparkles,
 } from 'lucide-react';
@@ -17,11 +15,9 @@ import {
 export default function Navbar({ activeView, setActiveView }) {
   const { user, logout, openAuthModal, isAdmin } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleNavClick = (view) => {
     setActiveView(view);
-    setMobileMenuOpen(false);
     setDropdownOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -164,95 +160,8 @@ export default function Navbar({ activeView, setActiveView }) {
               )}
             </div>
           )}
-
-          {/* Mobile hamburger button */}
-          <button
-            className="mobile-toggle-btn"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          >
-            {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
-          </button>
         </div>
       </div>
-
-      {/* Mobile Drawer Navigation */}
-      {mobileMenuOpen && (
-        <div className="mobile-drawer">
-          <div className="mobile-nav-links">
-            <button
-              className={`mobile-nav-link ${activeView === 'home' ? 'active' : ''}`}
-              onClick={() => handleNavClick('home')}
-            >
-              Trang Chủ
-            </button>
-            <button
-              className={`mobile-nav-link ${activeView === 'concepts' ? 'active' : ''}`}
-              onClick={() => handleNavClick('concepts')}
-            >
-              Concept & Portfolio
-            </button>
-            <button
-              className={`mobile-nav-link ${activeView === 'pricing' ? 'active' : ''}`}
-              onClick={() => handleNavClick('pricing')}
-            >
-              Bảng Giá Gói Chụp
-            </button>
-            <button
-              className={`mobile-nav-link ${activeView === 'rooms' ? 'active' : ''}`}
-              onClick={() => handleNavClick('rooms')}
-            >
-              Phòng Chụp
-            </button>
-
-            {user ? (
-              <>
-                <div className="mobile-divider" />
-                <button
-                  className={`mobile-nav-link ${activeView === 'my-bookings' ? 'active' : ''}`}
-                  onClick={() => handleNavClick('my-bookings')}
-                >
-                  <FolderKanban size={16} /> Lịch Hẹn & Voucher Của Tôi
-                </button>
-                <button
-                  className={`mobile-nav-link ${activeView === 'albums' ? 'active' : ''}`}
-                  onClick={() => handleNavClick('albums')}
-                >
-                  <Image size={16} /> Duyệt & Chọn Ảnh Online
-                </button>
-                {isAdmin && (
-                  <button
-                    className={`mobile-nav-link ${activeView === 'admin' ? 'active' : ''}`}
-                    onClick={() => handleNavClick('admin')}
-                    style={{ color: 'var(--gold-primary)' }}
-                  >
-                    <Shield size={16} /> Quản Trị Studio
-                  </button>
-                )}
-                <button
-                  className="mobile-nav-link"
-                  onClick={logout}
-                  style={{ color: 'var(--rose-accent)' }}
-                >
-                  <LogOut size={16} /> Đăng Xuất ({user.ho_ten})
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="mobile-divider" />
-                <button
-                  className="mobile-nav-link"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    openAuthModal('login');
-                  }}
-                >
-                  <User size={16} /> Đăng Nhập / Đăng Ký
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </header>
   );
 }
