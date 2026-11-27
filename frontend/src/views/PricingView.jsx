@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { catalogApi } from '../api/client';
-import { CheckCircle2, Plus, Sparkles, ShieldCheck, RefreshCw, Calendar } from 'lucide-react';
+import {
+  CheckCircle2,
+  Plus,
+  Sparkles,
+  ShieldCheck,
+  RefreshCw,
+  Calendar,
+  Users,
+  Camera,
+  BookOpen,
+  Layers,
+  Palette,
+  Gem,
+  Clock,
+  CloudLightning,
+} from 'lucide-react';
 
 export default function PricingView({ setActiveView }) {
   const [packages, setPackages] = useState([]);
@@ -25,6 +40,48 @@ export default function PricingView({ setActiveView }) {
     loadPricing();
   }, []);
 
+  const getAddonMeta = (addon) => {
+    const name = (addon.ten_dich_vu || '').toLowerCase();
+    if (name.includes('makeup') || name.includes('trang điểm')) {
+      return {
+        icon: <Palette size={26} />,
+        badge: 'Khuyên Dùng',
+        highlight: 'Mỹ phẩm high-end MAC & Dior chính hãng',
+        category: 'Trang Điểm & Làm Tóc',
+      };
+    }
+    if (name.includes('người') || name.includes('thêm')) {
+      return {
+        icon: <Users size={26} />,
+        badge: 'Phổ Biến',
+        highlight: 'Thêm phụ kiện & tối đa 8 người/ca chụp',
+        category: 'Khách Chụp Kèm',
+      };
+    }
+    if (name.includes('gốc') || name.includes('raw') || name.includes('toàn bộ')) {
+      return {
+        icon: <Camera size={26} />,
+        badge: 'Bản Quyền',
+        highlight: 'Bàn giao file JPEG gốc 4K chất lượng cao',
+        category: 'Dữ Liệu Ảnh Gốc',
+      };
+    }
+    if (name.includes('photobook') || name.includes('album') || name.includes('in')) {
+      return {
+        icon: <BookOpen size={26} />,
+        badge: 'Cao Cấp',
+        highlight: 'Giấy mỹ thuật chống ẩm & tráng gương sang trọng',
+        category: 'In Ấn Kỷ Niệm',
+      };
+    }
+    return {
+      icon: <Layers size={26} />,
+      badge: 'Chuyên Sâu',
+      highlight: 'Chỉnh da, thon dáng & màu sắc chuẩn tạp chí',
+      category: 'Hậu Kỳ Photoshop',
+    };
+  };
+
   return (
     <div className="container section-padding">
       <div className="section-header text-center">
@@ -36,7 +93,7 @@ export default function PricingView({ setActiveView }) {
       </div>
 
       {/* 3 PACKAGES GRID */}
-      <div className="packages-grid" style={{ marginBottom: '64px' }}>
+      <div className="packages-grid" style={{ marginBottom: '72px' }}>
         {packages.map((pkg) => {
           const isPopular = pkg.ma_goi === 'standard';
           return (
@@ -97,29 +154,98 @@ export default function PricingView({ setActiveView }) {
         })}
       </div>
 
-      {/* ADDONS TABLE */}
-      <div className="addons-section">
+      {/* ADDONS REDESIGN */}
+      <div className="addons-section" style={{ marginBottom: '72px' }}>
         <div className="section-header text-center">
-          <div className="badge badge-gold">Dịch Vụ Cộng Thêm</div>
-          <h2 className="section-title font-serif">Dịch Vụ & Phụ Phí Tùy Chọn</h2>
-          <p className="section-subtitle">Tùy biến buổi chụp hoàn hảo theo đúng mong muốn của bạn</p>
+          <div className="badge badge-gold">Tùy Biến Theo Nhu Cầu</div>
+          <h2 className="section-title font-serif">Dịch Vụ Cộng Thêm & Phụ Phí</h2>
+          <p className="section-subtitle">
+            Lựa chọn bổ sung linh hoạt để buổi chụp thêm trọn vẹn và hoàn hảo đúng mong muốn của bạn
+          </p>
         </div>
 
-        <div className="addons-grid">
-          {addons.map((addon) => (
-            <div key={addon.id} className="addon-card">
-              <div className="addon-info">
-                <h4>{addon.ten_dich_vu}</h4>
-                <p>{addon.mo_ta}</p>
-              </div>
-              <div className="addon-price-col">
-                <div className="addon-price">
-                  +{new Intl.NumberFormat('vi-VN').format(addon.gia)} đ
+        <div className="addons-luxury-grid">
+          {addons.map((addon) => {
+            const meta = getAddonMeta(addon);
+            return (
+              <div key={addon.id} className="addon-luxury-card">
+                <div className="addon-card-top">
+                  <div className="addon-card-icon">{meta.icon}</div>
+                  <div className="addon-card-badges">
+                    <span className="addon-cat-tag">{meta.category}</span>
+                    <span className="badge badge-gold">{meta.badge}</span>
+                  </div>
                 </div>
-                <div className="addon-unit">/ {addon.don_vi_tinh}</div>
+
+                <div className="addon-card-body">
+                  <h3 className="addon-title font-serif">{addon.ten_dich_vu}</h3>
+                  <p className="addon-desc">{addon.mo_ta}</p>
+                  <div className="addon-feature-chip">
+                    <CheckCircle2 size={14} /> {meta.highlight}
+                  </div>
+                </div>
+
+                <div className="addon-card-bottom">
+                  <div className="addon-pricing-tag">
+                    <div className="addon-pricing-val">
+                      +{new Intl.NumberFormat('vi-VN').format(addon.gia)} <span className="addon-currency">VNĐ</span>
+                    </div>
+                    <div className="addon-pricing-unit">/ {addon.don_vi_tinh}</div>
+                  </div>
+
+                  <button
+                    className="btn-outline-gold btn-sm addon-cta-btn"
+                    onClick={() => setActiveView('booking')}
+                  >
+                    <Plus size={14} /> Đặt Kèm Khi Tạo Đơn
+                  </button>
+                </div>
               </div>
+            );
+          })}
+        </div>
+
+        {/* Studio Privileges Banner */}
+        <div className="studio-privileges-banner">
+          <div className="privilege-box">
+            <div className="privilege-icon">
+              <Gem size={24} />
             </div>
-          ))}
+            <div className="privilege-text">
+              <h4>100% Mỹ Phẩm Chính Hãng</h4>
+              <p>Mỹ phẩm MAC, NARS, Dior an toàn và phù hợp mọi làn da</p>
+            </div>
+          </div>
+
+          <div className="privilege-box">
+            <div className="privilege-icon">
+              <Camera size={24} />
+            </div>
+            <div className="privilege-text">
+              <h4>Thiết Bị Chụp Chuyên Nghiệp</h4>
+              <p>Máy ảnh Sony Alpha Master & Dàn đèn Godox / Profoto chuẩn studio</p>
+            </div>
+          </div>
+
+          <div className="privilege-box">
+            <div className="privilege-icon">
+              <CloudLightning size={24} />
+            </div>
+            <div className="privilege-text">
+              <h4>Lưu Trữ Cloud Riêng Tư 12 Tháng</h4>
+              <p>Duyệt ảnh online tại nhà và tải ảnh gốc tốc độ cao bất cứ lúc nào</p>
+            </div>
+          </div>
+
+          <div className="privilege-box">
+            <div className="privilege-icon">
+              <Clock size={24} />
+            </div>
+            <div className="privilege-text">
+              <h4>Bàn Giao Đúng Hạn</h4>
+              <p>Ảnh duyệt sau 24 giờ - Trả ảnh Photoshop hoàn thiện sau 3 - 5 ngày</p>
+            </div>
+          </div>
         </div>
       </div>
 
