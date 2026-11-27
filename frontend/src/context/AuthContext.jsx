@@ -22,14 +22,21 @@ export function AuthProvider({ children }) {
 
       try {
         const res = await authApi.getMe();
-        if (res.success && res.data?.user) {
-          setUser(res.data.user);
+        // Backend trả về data chính là object user: { id, ho_ten, email, vai_tro... }
+        const currentUser = res.data?.user || res.data;
+        if (res.success && currentUser && currentUser.id) {
+          setUser(currentUser);
         } else {
-          logout();
+          // Token không hợp lệ thì xóa token trong im lặng, không hiện toast đăng xuất
+          localStorage.removeItem('studio_token');
+          setToken(null);
+          setUser(null);
         }
       } catch (err) {
         console.warn('Lỗi khôi phục phiên đăng nhập:', err.message);
-        logout();
+        localStorage.removeItem('studio_token');
+        setToken(null);
+        setUser(null);
       } finally {
         setLoading(false);
       }
