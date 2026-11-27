@@ -75,7 +75,12 @@ export default function BookingView({
   const [paymentInfo, setPaymentInfo] = useState(null);
   const [isDepositPaid, setIsDepositPaid] = useState(false);
 
-  // Load catalog on mount
+  // =========================================================================
+  // 🎓 BƯỚC 1: TẢI DỮ LIỆU BAN ĐẦU (CONCEPTS, GÓI, DỊCH VỤ THÊM, KHUNG GIỜ)
+  // - "Tại sao dùng Promise.all?": Để gửi 4 API cùng lúc song song, giúp trang tải
+  //   nhanh gấp 4 lần thay vì phải chờ từng request hoàn thành tuần tự.
+  // - APIs gọi: /catalog/concepts, /catalog/packages, /catalog/addons, /catalog/time-slots
+  // =========================================================================
   useEffect(() => {
     async function loadCatalog() {
       try {
@@ -89,14 +94,14 @@ export default function BookingView({
         if (conceptsRes.success) setConcepts(conceptsRes.data);
         if (pkgsRes.success) {
           setPackages(pkgsRes.data);
-          // Auto select Standard package as default
+          // Mặc định chọn gói Tiêu Chuẩn (Standard) vì là gói phổ biến nhất
           const standardPkg = pkgsRes.data.find((p) => p.ma_goi === 'standard') || pkgsRes.data[0];
           setSelectedPackage(standardPkg);
         }
         if (addonsRes.success) setAddons(addonsRes.data);
         if (slotsRes.success) setTimeSlots(slotsRes.data);
 
-        // If no initialConcept passed, default to first concept
+        // Nếu chưa chọn concept từ trang ngoài thì mặc định lấy concept đầu tiên
         if (!initialConcept && conceptsRes.success && conceptsRes.data.length > 0) {
           setSelectedConcept(conceptsRes.data[0]);
         }
@@ -107,7 +112,7 @@ export default function BookingView({
     loadCatalog();
   }, [initialConcept]);
 
-  // Sync user info if logged in
+  // Đồng bộ thông tin nếu khách hàng đã đăng nhập
   useEffect(() => {
     if (user) {
       setCustomerInfo((prev) => ({
@@ -119,7 +124,14 @@ export default function BookingView({
     }
   }, [user]);
 
-  // Check slot availability when date or concept changes
+  // =========================================================================
+  // 🎓 BƯỚC 2: KIỂM TRA TRÙNG LỊCH THỜI GIAN THỰC (REAL-TIME AVAILABILITY)
+  // - "API nào kiểm tra ca trống?": GET /api/bookings/availability?ngay_chup=...&concept_id=...
+  // - "Thuật toán Backend kiểm tra gì?":
+  //    1. Phòng chụp của Concept đã có ai đặt giờ đó chưa? (Tối đa 1 ca/phòng)
+  //    2. Giờ đó Studio còn ít nhất 1 thợ rảnh hay không?
+  // - Nhận về: Mảng 6 ca chụp kèm 'kha_dung: true/false' và 'ly_do_het_cho'.
+  // =========================================================================
   useEffect(() => {
     async function checkSlots() {
       if (!selectedConcept || !ngayChup) return;
@@ -141,7 +153,12 @@ export default function BookingView({
     }
   }, [ngayChup, selectedConcept, step]);
 
-  // Recalculate price when package, addons, or voucher change
+  // =========================================================================
+  // 🎓 BƯỚC 3: TÍNH TOÁN BẢNG GIÁ VÀ TIỀN CỌC 30% (PRICING ENGINE)
+  // - API gọi: POST /api/bookings/calculate-price
+  // - Gửi lên: { goi_dich_vu_id, dich_vu_them, ma_voucher }
+  // - Nhận về: Tổng tiền chi tiết, tính sẵn tiền cọc 30% và tiền còn lại 70%.
+  // =========================================================================
   useEffect(() => {
     async function calcPrice() {
       if (!selectedPackage) return;
@@ -165,7 +182,7 @@ export default function BookingView({
           setVoucherDiscount(res.data.tien_giam_voucher || 0);
         }
       } catch {
-        // Fallback local calc
+        // Fallback tự tính toán nếu mất mạng
         const basePrice = selectedPackage.gia_co_ban || 0;
         let addonsTotal = 0;
         addons.forEach((a) => {
@@ -240,7 +257,14 @@ export default function BookingView({
     }
   };
 
-  // Submit and create booking
+  // =========================================================================
+  // 🎓 BƯỚC 4: GỬI LỆNH TẠO ĐƠN ĐẶT LỊCH LÊN BACKEND
+  // - API gọi: POST /api/bookings
+  // - Body gửi lên: { concept_id, goi_dich_vu_id, khung_gio_id, ngay_chup, dich_vu_them, ma_voucher, ghi_chu }
+  // - Kết quả Backend trả về:
+  //    1. 'don_dat_lich': Mã đơn (VD: BK-202611-ABC), trạng thái 'cho_thanh_toan_coc'
+  //    2. 'thong_tin_chuyen_khoan': STK ngân hàng, số tiền cọc 30%, mã QR và hạn giữ slot 15 phút.
+  // =========================================================================
   const handleCreateBooking = async () => {
     if (!user) {
       showToast('Vui lòng đăng nhập để hệ thống lưu đơn đặt lịch vào tài khoản của bạn', 'info');
@@ -287,7 +311,11 @@ export default function BookingView({
     }
   };
 
-  // Confirm Deposit Payment
+  // =========================================================================
+  // 🎓 BƯỚC 5: XÁC NHẬN ĐÃ CHUYỂN KHOẢN ĐẶT CỌC 30%
+  // - API gọi: POST /api/bookings/:id/pay-deposit
+  // - Khi khách bấm xác nhận chuyển khoản xong, đơn được chuyển từ 'cho_thanh_toan_coc' -> 'da_coc'
+  // =========================================================================
   const handleConfirmDeposit = async () => {
     if (!createdBooking) return;
     setLoading(true);

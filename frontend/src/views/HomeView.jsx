@@ -19,6 +19,16 @@ export default function HomeView({ setActiveView, onSelectConcept, onOpenConcept
   const [homeData, setHomeData] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // =========================================================================
+  // 🎓 TẢI DỮ LIỆU TỔNG HỢP CHO TRANG CHỦ (HOME CATALOG)
+  // - "Tại sao trang chủ chỉ gọi 1 API duy nhất?":
+  //    Thay vì gửi nhiều request lẻ tẻ, Backend cung cấp endpoint GET /api/catalog/home
+  //    trả về cùng lúc 4 khối dữ liệu:
+  //    1. danh_muc: Các thể loại dịch vụ chụp
+  //    2. concepts_noi_bat: Tối đa 8 concept tiêu biểu nhất
+  //    3. goi_dich_vu: 3 gói dịch vụ cơ bản (Basic, Standard, VIP)
+  //    4. phong_chup: 3 phòng chụp vật lý thực tế của Studio
+  // =========================================================================
   useEffect(() => {
     async function fetchHome() {
       try {

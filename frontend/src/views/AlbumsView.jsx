@@ -68,7 +68,14 @@ export default function AlbumsView({ initialBookingId }) {
     }
   };
 
-  // Toggle photo selection
+  // =========================================================================
+  // 🎓 TÍNH NĂNG CHỌN ẢNH & LƯU GHI CHÚ CHỈNH SỬA (REAL-TIME SELECTION)
+  // - API gọi: PATCH /api/albums/:albumId/photos/:photoId
+  // - Body gửi lên: { duoc_chon: true/false, ghi_chu_khach: "bóp eo, mịn da..." }
+  // - Điểm đặc sắc: Backend tự tính toán số ảnh đã chọn so với số ảnh theo gói.
+  //   Nếu chọn vượt gói (ví dụ gói VIP 35 ảnh mà chọn 37 ảnh), Backend tự tính
+  //   phụ phí phát sinh: 50.000 VNĐ / ảnh thêm.
+  // =========================================================================
   const handleToggleSelectPhoto = async (photo) => {
     if (!selectedAlbum) return;
     const newSelected = !photo.duoc_chon;
@@ -114,7 +121,13 @@ export default function AlbumsView({ initialBookingId }) {
     }
   };
 
-  // Submit album for retouching
+  // =========================================================================
+  // 🎓 CHỐT DANH SÁCH ẢNH & GỬI BỘ PHẬN PHOTOSHOP (SUBMIT RETOUCHING)
+  // - API gọi: POST /api/albums/:albumId/submit
+  // - Nghiệp vụ: Chuyển trạng thái album sang 'da_chot_chon_anh'.
+  //   Lúc này giao diện sẽ KHÓA tính năng thay đổi ảnh của khách, đồng thời
+  //   nếu có phụ phí chọn thêm ảnh sẽ tự động cộng vào khoản tiền 70% còn lại.
+  // =========================================================================
   const handleSubmitRetouching = async () => {
     if (!selectedAlbum) return;
     if (selectedAlbum.so_anh_da_chon === 0) {
