@@ -303,7 +303,9 @@ export default function BookingView({
       const res = await bookingApi.createBooking(payload);
 
       if (res.success && res.data) {
-        setCreatedBooking(res.data.don_dat_lich);
+        // Backend trả về { booking: fullBooking, thong_tin_chuyen_khoan: ... }
+        const bookingData = res.data.booking || res.data.don_dat_lich || res.data;
+        setCreatedBooking(bookingData);
         setPaymentInfo(res.data.thong_tin_chuyen_khoan);
         showToast('Tạo đơn đặt lịch thành công! Vui lòng đặt cọc 30% để giữ chỗ.', 'success');
         setStep(4);
@@ -321,10 +323,33 @@ export default function BookingView({
   // - Khi khách bấm xác nhận chuyển khoản xong, đơn được chuyển từ 'cho_thanh_toan_coc' -> 'da_coc'
   // =========================================================================
   const handleConfirmDeposit = async () => {
-    if (!createdBooking) return;
+    let targetBooking = createdBooking;
+
+    // Dự phòng an toàn: nếu chưa có ID trong state nhưng có mã đơn trong paymentInfo, tự động tra cứu từ My Bookings
+    if (!targetBooking?.id && (paymentInfo?.noi_dung_chuyen_khoan || paymentInfo?.ma_don)) {
+      const code = paymentInfo.noi_dung_chuyen_khoan || paymentInfo.ma_don;
+      try {
+        const myRes = await bookingApi.getMyBookings();
+        if (myRes.success && Array.isArray(myRes.data)) {
+          const found = myRes.data.find((b) => b.ma_don === code);
+          if (found) {
+            targetBooking = found;
+            setCreatedBooking(found);
+          }
+        }
+      } catch (e) {
+        console.warn('Lỗi tra cứu đơn:', e);
+      }
+    }
+
+    if (!targetBooking?.id) {
+      showToast('Chưa tìm thấy mã đơn đặt lịch để xác nhận cọc', 'warning');
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await bookingApi.payDeposit(createdBooking.id, {
+      const res = await bookingApi.payDeposit(targetBooking.id, {
         hinh_thuc: 'chuyen_khoan',
         ma_giao_dich: `TXN_${Date.now()}`,
       });
@@ -810,10 +835,10 @@ export default function BookingView({
                     <div className="detail-row">
                       <span className="detail-label">Mã Đơn Đặt Lịch:</span>
                       <div className="detail-value-box">
-                        <strong>{createdBooking?.ma_don}</strong>
+                        <strong>{createdBooking?.ma_don || paymentInfo?.noi_dung_chuyen_khoan}</strong>
                         <button
                           className="btn-copy"
-                          onClick={() => copyToClipboard(createdBooking?.ma_don, 'Mã đơn')}
+                          onClick={() => copyToClipboard(createdBooking?.ma_don || paymentInfo?.noi_dung_chuyen_khoan, 'Mã đơn')}
                         >
                           <Copy size={14} />
                         </button>
@@ -899,7 +924,7 @@ export default function BookingView({
                 <h2 className="font-serif">Đặt Lịch & Đặt Cọc Thành Công!</h2>
                 <p className="success-msg">
                   Cảm ơn bạn đã lựa chọn Bơ Photo Studio. Mã đơn của bạn là{' '}
-                  <strong>{createdBooking?.ma_don}</strong>. Chúng tôi đã gửi thông tin xác nhận và hướng dẫn chuẩn bị trang phục đến email của bạn.
+                  <strong>{createdBooking?.ma_don || paymentInfo?.noi_dung_chuyen_khoan}</strong>. Chúng tôi đã gửi thông tin xác nhận và hướng dẫn chuẩn bị trang phục đến email của bạn.
                 </p>
 
                 <div className="success-actions">
