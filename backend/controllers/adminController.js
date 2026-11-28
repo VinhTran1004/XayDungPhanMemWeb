@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const { z } = require('zod');
 const supabase = require('../config/supabase');
 const { AppError, sendSuccess } = require('../utils/response');
-const { ACTIVE_BOOKING_STATUSES, releaseExpiredHolds } = require('../services/slotService');
+const { ACTIVE_BOOKING_STATUSES, releaseExpiredHolds, assertSlotAvailable } = require('../services/slotService');
+const { calculateBookingPricing } = require('../services/pricingService');
 const { uploadBufferToStorage, resolveStorageUrls } = require('../services/storageService');
 
 const BOOKING_STATUS_ENUM = [
@@ -15,6 +16,42 @@ const BOOKING_STATUS_ENUM = [
   'da_huy_hoan_coc',
   'da_huy_mat_coc',
 ];
+
+// Map Frontend shorthand aliases smoothly onto DB CHECK constraint values
+const STATUS_ALIAS_MAP = {
+  da_phan_cong: 'da_coc',
+  da_chup: 'cho_chon_anh',
+  da_chot_anh: 'dang_chinh_sua',
+  da_hoan_thanh: 'hoan_thanh',
+};
+
+const normalizeBookingStatus = (raw) => STATUS_ALIAS_MAP[raw] || raw;
+
+const ADMIN_BOOKING_SELECT = `
+  *,
+  concept:concept_id ( id, ten_concept, hinh_dai_dien ),
+  phong_chup:phong_chup_id ( id, ten_phong, phong_cach ),
+  goi_dich_vu:goi_dich_vu_id ( id, ten_goi, ma_goi, gia_co_ban, so_anh_chinh_sua ),
+  khung_gio_chup:khung_gio_id ( id, ca_chup, gio_bat_dau, gio_ket_thuc ),
+  khach_hang:nguoi_dung!khach_hang_id ( id, ho_ten, email, so_dien_thoai ),
+  tho_chup:nguoi_dung!tho_chup_id ( id, ho_ten, email, so_dien_thoai ),
+  chi_tiet_dich_vu_them (
+    id,
+    dich_vu_cong_them_id,
+    so_luong,
+    don_gia,
+    thanh_tien,
+    dich_vu_cong_them ( id, ten_dich_vu, don_vi_tinh )
+  )
+`;
+
+const attachBookingCompatFields = (b) =>
+  b
+    ? {
+        ...b,
+        khung_gio: b.khung_gio_chup || null,
+      }
+    : null;
 
 const parsePositiveId = (rawId, label = 'ID') => {
   const id = Number(rawId);
@@ -30,73 +67,9 @@ const generateTxnCode = (prefix) => {
   return `${prefix}-${ym}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 };
 
-// Catalog resource definitions for unified CRUD
-const CATALOG_RESOURCES = {
-  categories: {
-    table: 'danh_muc_dich_vu',
-    createSchema: z.object({
-      ten_danh_muc: z.string().trim().min(2).max(150),
-      duong_dan_danh_muc: z.string().trim().min(2).max(150),
-      mo_ta: z.string().trim().optional().nullable(),
-      hinh_dai_dien: z.string().trim().optional().nullable(),
-      trang_thai: z.boolean().optional().default(true),
-    }),
-  },
-  concepts: {
-    table: 'concept',
-    createSchema: z.object({
-      danh_muc_id: z.coerce.number().int().positive(),
-      phong_chup_id: z.coerce.number().int().positive(),
-      ten_concept: z.string().trim().min(2).max(150),
-      duong_dan_concept: z.string().trim().min(2).max(150),
-      mo_ta: z.string().trim().optional().nullable(),
-      hinh_dai_dien: z.string().trim().min(1),
-      danh_sach_hinh_mau: z.array(z.string().trim()).optional().default([]),
-      goi_y_trang_phuc: z.string().trim().optional().nullable(),
-      trang_thai: z.boolean().optional().default(true),
-    }),
-  },
-  packages: {
-    table: 'goi_dich_vu',
-    createSchema: z.object({
-      ten_goi: z.string().trim().min(2).max(150),
-      ma_goi: z.string().trim().min(2).max(50),
-      mo_ta: z.string().trim().optional().nullable(),
-      gia_co_ban: z.coerce.number().nonnegative(),
-      thoi_luong_phut: z.coerce.number().int().positive(),
-      so_anh_chinh_sua: z.coerce.number().int().positive(),
-      so_trang_phuc_toi_da: z.coerce.number().int().positive().optional().default(1),
-      trang_thai: z.boolean().optional().default(true),
-    }),
-  },
-  addons: {
-    table: 'dich_vu_cong_them',
-    createSchema: z.object({
-      ten_dich_vu: z.string().trim().min(2).max(150),
-      gia: z.coerce.number().nonnegative(),
-      don_vi_tinh: z.string().trim().max(30).optional().default('lan'),
-      mo_ta: z.string().trim().optional().nullable(),
-      trang_thai: z.boolean().optional().default(true),
-    }),
-  },
-  rooms: {
-    table: 'phong_chup',
-    createSchema: z.object({
-      ten_phong: z.string().trim().min(2).max(150),
-      phong_cach: z.string().trim().min(2).max(200),
-      mo_ta: z.string().trim().optional().nullable(),
-      trang_thai: z.boolean().optional().default(true),
-    }),
-  },
-};
-
-const getCatalogResourceConfig = (resourceKey) => {
-  const cfg = CATALOG_RESOURCES[resourceKey];
-  if (!cfg) {
-    throw new AppError(`Loại danh mục '${resourceKey}' không hợp lệ`, 404, 'INVALID_CATALOG_RESOURCE');
-  }
-  return cfg;
-};
+// ============================================================================
+// 1. QUẢN TRỊ ĐƠN ĐẶT LỊCH FULL CRUD (/api/admin/bookings)
+// ============================================================================
 
 /**
  * GET /api/admin/bookings
@@ -112,18 +85,7 @@ const getAdminBookings = async (req, res, next) => {
 
     let query = supabase
       .from('don_dat_lich')
-      .select(
-        `
-        *,
-        concept:concept_id ( id, ten_concept ),
-        phong_chup:phong_chup_id ( id, ten_phong ),
-        goi_dich_vu:goi_dich_vu_id ( id, ten_goi, ma_goi, so_anh_chinh_sua ),
-        khung_gio_chup:khung_gio_id ( id, ca_chup, gio_bat_dau, gio_ket_thuc ),
-        khach_hang:nguoi_dung!khach_hang_id ( id, ho_ten, email, so_dien_thoai ),
-        tho_chup:nguoi_dung!tho_chup_id ( id, ho_ten, email, so_dien_thoai )
-      `,
-        { count: 'exact' }
-      )
+      .select(ADMIN_BOOKING_SELECT, { count: 'exact' })
       .order('ngay_chup', { ascending: false })
       .order('id', { ascending: false })
       .range(from, to);
@@ -131,7 +93,9 @@ const getAdminBookings = async (req, res, next) => {
     if (req.query.ngay_chup) query = query.eq('ngay_chup', String(req.query.ngay_chup).trim());
     if (req.query.phong_chup_id) query = query.eq('phong_chup_id', Number(req.query.phong_chup_id));
     if (req.query.tho_chup_id) query = query.eq('tho_chup_id', Number(req.query.tho_chup_id));
-    if (req.query.trang_thai_don) query = query.eq('trang_thai_don', String(req.query.trang_thai_don).trim());
+    if (req.query.trang_thai_don) {
+      query = query.eq('trang_thai_don', normalizeBookingStatus(String(req.query.trang_thai_don).trim()));
+    }
     if (req.query.trang_thai_thanh_toan) {
       query = query.eq('trang_thai_thanh_toan', String(req.query.trang_thai_thanh_toan).trim());
     }
@@ -144,7 +108,7 @@ const getAdminBookings = async (req, res, next) => {
 
     return sendSuccess(res, {
       message: 'Lấy danh sách đơn đặt lịch thành công',
-      data: data || [],
+      data: (data || []).map(attachBookingCompatFields),
       meta: {
         page,
         limit,
@@ -152,6 +116,275 @@ const getAdminBookings = async (req, res, next) => {
         total_pages: Math.ceil((count || 0) / limit),
       },
     });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+/**
+ * GET /api/admin/bookings/:id
+ */
+const getAdminBookingDetail = async (req, res, next) => {
+  try {
+    const bookingId = parsePositiveId(req.params.id, 'ID đơn đặt lịch');
+
+    const [{ data: booking, error: bErr }, { data: payments }, { data: album }] = await Promise.all([
+      supabase.from('don_dat_lich').select(ADMIN_BOOKING_SELECT).eq('id', bookingId).maybeSingle(),
+      supabase.from('lich_su_thanh_toan').select('*').eq('don_dat_lich_id', bookingId).order('ngay_thanh_toan'),
+      supabase.from('album').select('*').eq('don_dat_lich_id', bookingId).maybeSingle(),
+    ]);
+
+    if (bErr) throw new AppError(bErr.message, 500, 'DATABASE_ERROR');
+    if (!booking) throw new AppError('Không tìm thấy đơn đặt lịch', 404, 'BOOKING_NOT_FOUND');
+
+    return sendSuccess(res, {
+      message: 'Lấy chi tiết đơn đặt lịch thành công',
+      data: {
+        ...attachBookingCompatFields(booking),
+        lich_su_thanh_toan: payments || [],
+        album: album || null,
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+/**
+ * POST /api/admin/bookings
+ * Cho phép Admin tạo đơn đặt lịch trực tiếp cho khách tại quầy / qua hotline.
+ */
+const createAdminBooking = async (req, res, next) => {
+  try {
+    const schema = z.object({
+      khach_hang_id: z.coerce.number().int().positive('Vui lòng chọn khách hàng'),
+      concept_id: z.coerce.number().int().positive('Vui lòng chọn concept'),
+      goi_dich_vu_id: z.coerce.number().int().positive('Vui lòng chọn gói dịch vụ'),
+      khung_gio_id: z.coerce.number().int().positive('Vui lòng chọn khung giờ'),
+      ngay_chup: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày chụp phải có định dạng YYYY-MM-DD'),
+      tho_chup_id: z.coerce.number().int().positive().optional().nullable(),
+      dich_vu_them: z
+        .array(
+          z.object({
+            dich_vu_cong_them_id: z.coerce.number().int().positive(),
+            so_luong: z.coerce.number().int().min(1).max(20).default(1),
+          })
+        )
+        .optional()
+        .default([]),
+      da_thu_coc: z.boolean().optional().default(true),
+      ghi_chu_khach_hang: z.string().trim().max(1000).optional().nullable(),
+      ghi_chu_noi_bo: z.string().trim().max(1000).optional().nullable(),
+    });
+    const parsed = schema.parse(req.body);
+
+    const [{ concept }, pricing] = await Promise.all([
+      assertSlotAvailable({
+        ngayChup: parsed.ngay_chup,
+        conceptId: parsed.concept_id,
+        khungGioId: parsed.khung_gio_id,
+      }),
+      calculateBookingPricing({
+        goiDichVuId: parsed.goi_dich_vu_id,
+        dichVuThem: parsed.dich_vu_them,
+      }),
+    ]);
+
+    const maDon = generateTxnCode('BK');
+    const isDeposited = Boolean(parsed.da_thu_coc);
+
+    const { data: created, error: insErr } = await supabase
+      .from('don_dat_lich')
+      .insert([
+        {
+          ma_don: maDon,
+          khach_hang_id: parsed.khach_hang_id,
+          tho_chup_id: parsed.tho_chup_id || null,
+          phong_chup_id: concept.phong_chup_id,
+          concept_id: parsed.concept_id,
+          goi_dich_vu_id: parsed.goi_dich_vu_id,
+          khung_gio_id: parsed.khung_gio_id,
+          ngay_chup: parsed.ngay_chup,
+          tong_tien: pricing.tong_tien,
+          tien_coc: pricing.tien_coc,
+          tien_con_lai: pricing.tien_con_lai,
+          trang_thai_don: isDeposited ? 'da_coc' : 'cho_thanh_toan_coc',
+          trang_thai_thanh_toan: isDeposited ? 'da_thanh_toan_coc' : 'chua_thanh_toan',
+          ghi_chu_khach_hang: parsed.ghi_chu_khach_hang || null,
+          ghi_chu_noi_bo: parsed.ghi_chu_noi_bo || 'Đơn tạo trực tiếp bởi Quản trị viên',
+        },
+      ])
+      .select('*')
+      .single();
+
+    if (insErr) throw new AppError(`Lỗi tạo đơn đặt lịch: ${insErr.message}`, 400, 'CREATE_BOOKING_FAILED');
+
+    if (pricing.chi_tiet_dich_vu_them.length > 0) {
+      const addonRows = pricing.chi_tiet_dich_vu_them.map((item) => ({
+        don_dat_lich_id: created.id,
+        dich_vu_cong_them_id: item.dich_vu_cong_them_id,
+        so_luong: item.so_luong,
+        don_gia: item.don_gia,
+        thanh_tien: item.thanh_tien,
+      }));
+      await supabase.from('chi_tiet_dich_vu_them').insert(addonRows);
+    }
+
+    if (isDeposited && pricing.tien_coc > 0) {
+      await supabase.from('lich_su_thanh_toan').insert([
+        {
+          don_dat_lich_id: created.id,
+          loai_thanh_toan: 'tien_coc_30',
+          so_tien: pricing.tien_coc,
+          hinh_thuc: 'tien_mat',
+          ma_giao_dich: generateTxnCode('DEP'),
+          trang_thai: 'thanh_cong',
+        },
+      ]);
+    }
+
+    const { data: full } = await supabase
+      .from('don_dat_lich')
+      .select(ADMIN_BOOKING_SELECT)
+      .eq('id', created.id)
+      .single();
+
+    return sendSuccess(res, {
+      statusCode: 201,
+      message: 'Admin tạo đơn đặt lịch thành công',
+      data: attachBookingCompatFields(full),
+    });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+/**
+ * PATCH / PUT /api/admin/bookings/:id
+ * Admin chỉnh sửa thông tin đơn đặt lịch (bao gồm đổi lịch thủ công dưới 24h theo BRD mục 5.2).
+ */
+const updateAdminBooking = async (req, res, next) => {
+  try {
+    const bookingId = parsePositiveId(req.params.id, 'ID đơn đặt lịch');
+    const schema = z.object({
+      ngay_chup: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      khung_gio_id: z.coerce.number().int().positive().optional(),
+      concept_id: z.coerce.number().int().positive().optional(),
+      phong_chup_id: z.coerce.number().int().positive().optional(),
+      goi_dich_vu_id: z.coerce.number().int().positive().optional(),
+      tho_chup_id: z.coerce.number().int().positive().optional().nullable(),
+      trang_thai_don: z.string().trim().optional(),
+      trang_thai_thanh_toan: z.enum(['chua_thanh_toan', 'da_thanh_toan_coc', 'da_thanh_toan_du']).optional(),
+      ghi_chu_khach_hang: z.string().trim().max(1000).optional().nullable(),
+      ghi_chu_noi_bo: z.string().trim().max(1000).optional().nullable(),
+    });
+    const parsed = schema.parse(req.body);
+
+    if (Object.keys(parsed).length === 0) {
+      throw new AppError('Không có dữ liệu cần cập nhật', 400, 'EMPTY_UPDATE');
+    }
+
+    const { data: current, error: findErr } = await supabase
+      .from('don_dat_lich')
+      .select('*')
+      .eq('id', bookingId)
+      .maybeSingle();
+
+    if (findErr) throw new AppError(findErr.message, 500, 'DATABASE_ERROR');
+    if (!current) throw new AppError('Không tìm thấy đơn đặt lịch', 404, 'BOOKING_NOT_FOUND');
+
+    const updatePayload = { ...parsed };
+    if (updatePayload.trang_thai_don) {
+      const normalized = normalizeBookingStatus(updatePayload.trang_thai_don);
+      if (!BOOKING_STATUS_ENUM.includes(normalized)) {
+        throw new AppError('Trạng thái đơn không hợp lệ', 400, 'INVALID_BOOKING_STATUS');
+      }
+      updatePayload.trang_thai_don = normalized;
+    }
+
+    // If date, slot, or concept changes, verify room/photographer slot availability
+    const nextDate = updatePayload.ngay_chup || current.ngay_chup;
+    const nextSlot = updatePayload.khung_gio_id || current.khung_gio_id;
+    const nextConcept = updatePayload.concept_id || current.concept_id;
+    if (
+      nextDate !== current.ngay_chup ||
+      nextSlot !== current.khung_gio_id ||
+      nextConcept !== current.concept_id
+    ) {
+      const { concept } = await assertSlotAvailable({
+        ngayChup: nextDate,
+        conceptId: nextConcept,
+        khungGioId: nextSlot,
+        excludeBookingId: bookingId,
+      });
+      if (!updatePayload.phong_chup_id) {
+        updatePayload.phong_chup_id = concept.phong_chup_id;
+      }
+    }
+
+    const { data: updated, error: upErr } = await supabase
+      .from('don_dat_lich')
+      .update(updatePayload)
+      .eq('id', bookingId)
+      .select(ADMIN_BOOKING_SELECT)
+      .single();
+
+    if (upErr) throw new AppError(`Lỗi cập nhật đơn đặt lịch: ${upErr.message}`, 400, 'UPDATE_BOOKING_FAILED');
+
+    return sendSuccess(res, {
+      message: 'Cập nhật thông tin đơn đặt lịch thành công',
+      data: attachBookingCompatFields(updated),
+    });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+/**
+ * DELETE /api/admin/bookings/:id?hard=true
+ * Mặc định hủy đơn (`da_huy_mat_coc`); nếu `?hard=true` thì xóa hẳn đơn cùng chi tiết liên quan.
+ */
+const deleteAdminBooking = async (req, res, next) => {
+  try {
+    const bookingId = parsePositiveId(req.params.id, 'ID đơn đặt lịch');
+    const isHardDelete = String(req.query.hard || '').toLowerCase() === 'true';
+
+    if (isHardDelete) {
+      await supabase.from('lich_su_thanh_toan').delete().eq('don_dat_lich_id', bookingId);
+      await supabase.from('chi_tiet_dich_vu_them').delete().eq('don_dat_lich_id', bookingId);
+      const { data: deleted, error: delErr } = await supabase
+        .from('don_dat_lich')
+        .delete()
+        .eq('id', bookingId)
+        .select('*')
+        .maybeSingle();
+
+      if (delErr) {
+        throw new AppError(
+          `Không thể xóa vĩnh viễn đơn này do đang có album hoặc voucher liên kết (${delErr.message})`,
+          409,
+          'FOREIGN_KEY_CONFLICT'
+        );
+      }
+      if (!deleted) throw new AppError('Không tìm thấy đơn đặt lịch', 404, 'BOOKING_NOT_FOUND');
+      return sendSuccess(res, { message: 'Đã xóa vĩnh viễn đơn đặt lịch', data: deleted });
+    }
+
+    const { data: cancelled, error } = await supabase
+      .from('don_dat_lich')
+      .update({
+        trang_thai_don: 'da_huy_mat_coc',
+        thoi_gian_het_han_giu_cho: null,
+        ghi_chu_noi_bo: 'Đơn bị hủy bởi Quản trị viên',
+      })
+      .eq('id', bookingId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) throw new AppError(error.message, 400, 'CANCEL_BOOKING_FAILED');
+    if (!cancelled) throw new AppError('Không tìm thấy đơn đặt lịch', 404, 'BOOKING_NOT_FOUND');
+
+    return sendSuccess(res, { message: 'Đã hủy đơn đặt lịch thành công', data: cancelled });
   } catch (err) {
     return next(err);
   }
@@ -265,7 +498,6 @@ const assignPhotographer = async (req, res, next) => {
       throw new AppError('Nhiếp ảnh gia không tồn tại hoặc đang ngừng làm việc', 404, 'PHOTOGRAPHER_NOT_FOUND');
     }
 
-    // Ensure photographer is not already assigned to another active booking in the same date + slot
     const { data: conflict, error: cErr } = await supabase
       .from('don_dat_lich')
       .select('id, ma_don')
@@ -311,12 +543,17 @@ const updateBookingStatus = async (req, res, next) => {
     const bookingId = parsePositiveId(req.params.id, 'ID đơn đặt lịch');
     const parsed = z
       .object({
-        trang_thai_don: z.enum(BOOKING_STATUS_ENUM),
+        trang_thai_don: z.string().trim().min(1),
         ghi_chu_noi_bo: z.string().trim().max(1000).optional().nullable(),
       })
       .parse(req.body);
 
-    const updateData = { trang_thai_don: parsed.trang_thai_don };
+    const normalizedStatus = normalizeBookingStatus(parsed.trang_thai_don);
+    if (!BOOKING_STATUS_ENUM.includes(normalizedStatus)) {
+      throw new AppError(`Trạng thái đơn '${parsed.trang_thai_don}' không hợp lệ`, 400, 'INVALID_BOOKING_STATUS');
+    }
+
+    const updateData = { trang_thai_don: normalizedStatus };
     if (parsed.ghi_chu_noi_bo !== undefined) {
       updateData.ghi_chu_noi_bo = parsed.ghi_chu_noi_bo;
     }
@@ -399,9 +636,12 @@ const confirmFinalPayment = async (req, res, next) => {
   }
 };
 
+// ============================================================================
+// 2. UPLOAD ẢNH ALBUM (/raw-photos & /final-photos)
+// ============================================================================
+
 /**
  * POST /api/admin/albums/:donDatLichId/raw-photos
- * Supports multipart file upload (`photos`) OR JSON `{ tieu_de?, photo_urls: string[] }`.
  */
 const uploadRawPhotos = async (req, res, next) => {
   try {
@@ -432,7 +672,6 @@ const uploadRawPhotos = async (req, res, next) => {
       throw new AppError('Vui lòng tải lên ít nhất 1 file ảnh hoặc truyền danh sách photo_urls', 400, 'NO_FILES_PROVIDED');
     }
 
-    // Create album if not exists
     let { data: album, error: aFindErr } = await supabase
       .from('album')
       .select('*')
@@ -521,7 +760,6 @@ const uploadRawPhotos = async (req, res, next) => {
 
 /**
  * POST /api/admin/albums/:albumId/final-photos
- * Supports multipart file upload (`photos` + optional `anh_album_ids`) OR JSON `{ items: [{ anh_album_id, url }] }` / `photo_urls`.
  */
 const uploadFinalPhotos = async (req, res, next) => {
   try {
@@ -564,7 +802,6 @@ const uploadFinalPhotos = async (req, res, next) => {
 
     const updatedRows = [];
 
-    // 1) Handle uploaded files
     if (files.length > 0) {
       const folder = `albums/${album.don_dat_lich?.ma_don || album.id}/final`;
       for (let i = 0; i < files.length; i += 1) {
@@ -605,7 +842,6 @@ const uploadFinalPhotos = async (req, res, next) => {
       }
     }
 
-    // 2) Handle explicit JSON items [{ anh_album_id, url }]
     for (const item of itemsFromBody) {
       const { data: row, error: upErr } = await supabase
         .from('anh_album')
@@ -618,7 +854,6 @@ const uploadFinalPhotos = async (req, res, next) => {
       updatedRows.push(row);
     }
 
-    // 3) Handle JSON photo_urls mapped sequentially to selected photos
     for (let i = 0; i < urlsFromBody.length; i += 1) {
       const url = urlsFromBody[i].trim();
       const targetPhotoId = explicitPhotoIds[i] || selectedPhotos?.[i]?.id;
@@ -656,33 +891,185 @@ const uploadFinalPhotos = async (req, res, next) => {
   }
 };
 
+// ============================================================================
+// 3. QUẢN TRỊ LỊCH SỬ THANH TOÁN, THỐNG KÊ & NHẬT KÝ HOẠT ĐỘNG
+// ============================================================================
+
+/**
+ * GET /api/admin/payments
+ */
+const listAdminPayments = async (req, res, next) => {
+  try {
+    let query = supabase
+      .from('lich_su_thanh_toan')
+      .select(`
+        *,
+        don_dat_lich:don_dat_lich_id (
+          id,
+          ma_don,
+          ngay_chup,
+          khach_hang:nguoi_dung!khach_hang_id ( id, ho_ten, so_dien_thoai )
+        )
+      `)
+      .order('ngay_thanh_toan', { ascending: false });
+
+    if (req.query.don_dat_lich_id) {
+      query = query.eq('don_dat_lich_id', Number(req.query.don_dat_lich_id));
+    }
+    if (req.query.loai_thanh_toan) {
+      query = query.eq('loai_thanh_toan', String(req.query.loai_thanh_toan).trim());
+    }
+
+    const { data, error } = await query;
+    if (error) throw new AppError(error.message, 500, 'DATABASE_ERROR');
+
+    return sendSuccess(res, { message: 'Lấy lịch sử giao dịch thành công', data: data || [] });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+/**
+ * DELETE /api/admin/payments/:id
+ */
+const deleteAdminPayment = async (req, res, next) => {
+  try {
+    const id = parsePositiveId(req.params.id, 'ID giao dịch');
+    const { data: deleted, error } = await supabase
+      .from('lich_su_thanh_toan')
+      .delete()
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+
+    if (error) throw new AppError(error.message, 400, 'DELETE_PAYMENT_FAILED');
+    if (!deleted) throw new AppError('Không tìm thấy giao dịch', 404, 'PAYMENT_NOT_FOUND');
+
+    return sendSuccess(res, { message: 'Đã xóa bản ghi giao dịch', data: deleted });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+/**
+ * GET /api/admin/activity-logs
+ * Tổng hợp nhật ký hoạt động thời gian thực từ Đơn đặt lịch, Thanh toán và Album.
+ */
+const getActivityLogs = async (req, res, next) => {
+  try {
+    const limit = Math.min(100, Math.max(5, Number(req.query.limit) || 30));
+
+    const [{ data: bookings }, { data: payments }, { data: albums }] = await Promise.all([
+      supabase
+        .from('don_dat_lich')
+        .select('id, ma_don, trang_thai_don, ngay_tao, khach_hang:nguoi_dung!khach_hang_id(ho_ten)')
+        .order('ngay_tao', { ascending: false })
+        .limit(20),
+      supabase
+        .from('lich_su_thanh_toan')
+        .select('id, loai_thanh_toan, so_tien, hinh_thuc, ngay_thanh_toan, don_dat_lich:don_dat_lich_id(ma_don)')
+        .order('ngay_thanh_toan', { ascending: false })
+        .limit(20),
+      supabase
+        .from('album')
+        .select('id, tieu_de, trang_thai_album, so_anh_da_chon, thoi_gian_chot_anh, ngay_tao')
+        .order('ngay_tao', { ascending: false })
+        .limit(20),
+    ]);
+
+    const events = [];
+
+    for (const p of payments || []) {
+      events.push({
+        id: `pay-${p.id}`,
+        loai: 'thanh_toan',
+        mau_sac: 'green',
+        tieu_de:
+          p.loai_thanh_toan === 'tien_coc_30'
+            ? 'Ghi nhận thanh toán tiền cọc 30%'
+            : 'Ghi nhận tất toán 70% còn lại',
+        mo_ta: `Đơn #${p.don_dat_lich?.ma_don || ''} • ${Number(p.so_tien).toLocaleString('vi-VN')} VNĐ (${p.hinh_thuc})`,
+        thoi_gian: p.ngay_thanh_toan,
+      });
+    }
+
+    for (const b of bookings || []) {
+      events.push({
+        id: `book-${b.id}`,
+        loai: 'dat_lich',
+        mau_sac: 'blue',
+        tieu_de: `Đơn đặt lịch #${b.ma_don}`,
+        mo_ta: `Khách hàng ${b.khach_hang?.ho_ten || 'Khách'} • Trạng thái: ${b.trang_thai_don}`,
+        thoi_gian: b.ngay_tao,
+      });
+    }
+
+    for (const a of albums || []) {
+      events.push({
+        id: `album-${a.id}`,
+        loai: 'duyet_anh',
+        mau_sac: 'gold',
+        tieu_de: a.thoi_gian_chot_anh ? 'Khách hàng đã chốt danh sách ảnh' : 'Khởi tạo album duyệt ảnh',
+        mo_ta: `${a.tieu_de} • Đã chọn ${a.so_anh_da_chon || 0} ảnh (${a.trang_thai_album})`,
+        thoi_gian: a.thoi_gian_chot_anh || a.ngay_tao,
+      });
+    }
+
+    events.sort((a, b) => new Date(b.thoi_gian || 0).getTime() - new Date(a.thoi_gian || 0).getTime());
+
+    return sendSuccess(res, {
+      message: 'Lấy nhật ký hoạt động thành công',
+      data: events.slice(0, limit),
+    });
+  } catch (err) {
+    return next(err);
+  }
+};
+
 /**
  * GET /api/admin/stats
  */
 const getStats = async (req, res, next) => {
   try {
-    const [{ data: payments, error: pErr }, { data: bookings, error: bErr }, { data: rooms, error: rErr }] =
-      await Promise.all([
-        supabase.from('lich_su_thanh_toan').select('loai_thanh_toan, so_tien, trang_thai'),
-        supabase.from('don_dat_lich').select('trang_thai_don, phong_chup_id'),
-        supabase.from('phong_chup').select('id, ten_phong'),
-      ]);
+    const [
+      { data: payments, error: pErr },
+      { data: bookings, error: bErr },
+      { data: rooms, error: rErr },
+      { data: packages, error: pkgErr },
+    ] = await Promise.all([
+      supabase.from('lich_su_thanh_toan').select('loai_thanh_toan, so_tien, trang_thai, ngay_thanh_toan'),
+      supabase.from('don_dat_lich').select('trang_thai_don, phong_chup_id, goi_dich_vu_id, tien_coc'),
+      supabase.from('phong_chup').select('id, ten_phong'),
+      supabase.from('goi_dich_vu').select('id, ten_goi, ma_goi'),
+    ]);
 
     if (pErr) throw new AppError(pErr.message, 500, 'DATABASE_ERROR');
     if (bErr) throw new AppError(bErr.message, 500, 'DATABASE_ERROR');
     if (rErr) throw new AppError(rErr.message, 500, 'DATABASE_ERROR');
+    if (pkgErr) throw new AppError(pkgErr.message, 500, 'DATABASE_ERROR');
 
-    const tongDoanhThu = (payments || [])
-      .filter((p) => p.trang_thai === 'thanh_cong')
+    const validPayments = (payments || []).filter((p) => p.trang_thai === 'thanh_cong');
+    const tongDoanhThu = validPayments.reduce((sum, p) => sum + Number(p.so_tien || 0), 0);
+    const doanhThuCoc = validPayments
+      .filter((p) => p.loai_thanh_toan === 'tien_coc_30')
       .reduce((sum, p) => sum + Number(p.so_tien || 0), 0);
+
+    // 6-month revenue breakdown
+    const revenueByMonth = {};
+    for (const p of validPayments) {
+      if (p.ngay_thanh_toan) {
+        const ym = p.ngay_thanh_toan.slice(0, 7);
+        revenueByMonth[ym] = (revenueByMonth[ym] || 0) + Number(p.so_tien || 0);
+      }
+    }
 
     const thongKeTrangThai = {};
     const countByRoom = {};
+    const countByPackage = {};
     for (const b of bookings || []) {
       thongKeTrangThai[b.trang_thai_don] = (thongKeTrangThai[b.trang_thai_don] || 0) + 1;
-      if (b.phong_chup_id) {
-        countByRoom[b.phong_chup_id] = (countByRoom[b.phong_chup_id] || 0) + 1;
-      }
+      if (b.phong_chup_id) countByRoom[b.phong_chup_id] = (countByRoom[b.phong_chup_id] || 0) + 1;
+      if (b.goi_dich_vu_id) countByPackage[b.goi_dich_vu_id] = (countByPackage[b.goi_dich_vu_id] || 0) + 1;
     }
 
     const thongKePhong = (rooms || []).map((r) => ({
@@ -691,13 +1078,23 @@ const getStats = async (req, res, next) => {
       so_luot_dat: countByRoom[r.id] || 0,
     }));
 
+    const thongKeGoi = (packages || []).map((pkg) => ({
+      goi_dich_vu_id: pkg.id,
+      ten_goi: pkg.ten_goi,
+      ma_goi: pkg.ma_goi,
+      so_luot_dat: countByPackage[pkg.id] || 0,
+    }));
+
     return sendSuccess(res, {
       message: 'Lấy thống kê vận hành studio thành công',
       data: {
         tong_doanh_thu: tongDoanhThu,
+        doanh_thu_coc: doanhThuCoc,
         tong_so_don: (bookings || []).length,
+        doanh_thu_theo_thang: revenueByMonth,
         thong_ke_trang_thai: thongKeTrangThai,
         thong_ke_phong: thongKePhong,
+        thong_ke_goi_dich_vu: thongKeGoi,
       },
     });
   } catch (err) {
@@ -705,59 +1102,12 @@ const getStats = async (req, res, next) => {
   }
 };
 
-/**
- * Unified Admin Catalog CRUD handlers
- */
-const createCatalogItem = async (req, res, next) => {
-  try {
-    const cfg = getCatalogResourceConfig(req.params.resource);
-    const payload = cfg.createSchema.parse(req.body);
-    const { data, error } = await supabase.from(cfg.table).insert([payload]).select('*').single();
-    if (error) throw new AppError(`Lỗi tạo bản ghi ${cfg.table}: ${error.message}`, 400, 'CREATE_FAILED');
-    return sendSuccess(res, { statusCode: 201, message: 'Tạo mới thành công', data });
-  } catch (err) {
-    return next(err);
-  }
-};
-
-const updateCatalogItem = async (req, res, next) => {
-  try {
-    const cfg = getCatalogResourceConfig(req.params.resource);
-    const id = parsePositiveId(req.params.id);
-    const payload = cfg.createSchema.partial().parse(req.body);
-    if (Object.keys(payload).length === 0) {
-      throw new AppError('Không có dữ liệu cần cập nhật', 400, 'EMPTY_UPDATE');
-    }
-    const { data, error } = await supabase.from(cfg.table).update(payload).eq('id', id).select('*').maybeSingle();
-    if (error) throw new AppError(`Lỗi cập nhật ${cfg.table}: ${error.message}`, 400, 'UPDATE_FAILED');
-    if (!data) throw new AppError('Không tìm thấy bản ghi cần cập nhật', 404, 'NOT_FOUND');
-    return sendSuccess(res, { message: 'Cập nhật thành công', data });
-  } catch (err) {
-    return next(err);
-  }
-};
-
-const deleteCatalogItem = async (req, res, next) => {
-  try {
-    const cfg = getCatalogResourceConfig(req.params.resource);
-    const id = parsePositiveId(req.params.id);
-    // Soft disable (`trang_thai = false`) to preserve historical booking foreign keys
-    const { data, error } = await supabase
-      .from(cfg.table)
-      .update({ trang_thai: false })
-      .eq('id', id)
-      .select('*')
-      .maybeSingle();
-    if (error) throw new AppError(`Lỗi vô hiệu hóa ${cfg.table}: ${error.message}`, 400, 'DELETE_FAILED');
-    if (!data) throw new AppError('Không tìm thấy bản ghi', 404, 'NOT_FOUND');
-    return sendSuccess(res, { message: 'Đã ẩn/vô hiệu hóa mục danh mục thành công', data });
-  } catch (err) {
-    return next(err);
-  }
-};
-
 module.exports = {
   getAdminBookings,
+  getAdminBookingDetail,
+  createAdminBooking,
+  updateAdminBooking,
+  deleteAdminBooking,
   getPhotographers,
   confirmDeposit,
   assignPhotographer,
@@ -765,8 +1115,8 @@ module.exports = {
   confirmFinalPayment,
   uploadRawPhotos,
   uploadFinalPhotos,
+  listAdminPayments,
+  deleteAdminPayment,
+  getActivityLogs,
   getStats,
-  createCatalogItem,
-  updateCatalogItem,
-  deleteCatalogItem,
 };

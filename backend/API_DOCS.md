@@ -144,15 +144,51 @@ Nhóm API này **không cần đăng nhập**, dùng để dựng toàn bộ gia
 
 ---
 
-## 6. Nhóm API Dashboard Admin (`/api/admin`) — Chỉ `vai_tro = 'quan_tri_vien'`
+## 6. Nhóm API Dashboard Admin Full CRUD (`/api/admin`) — Chỉ `vai_tro = 'quan_tri_vien'`
 
+### 6.1. Thống kê, Giao dịch & Nhật ký hoạt động
+- **`GET /api/admin/stats`**: Trả về `tong_doanh_thu`, `doanh_thu_coc`, `tong_so_don`, `doanh_thu_theo_thang`, `thong_ke_trang_thai`, `thong_ke_phong`, `thong_ke_goi_dich_vu`.
+- **`GET /api/admin/activity-logs?limit=30`**: Nhật ký hoạt động mới nhất tổng hợp từ đơn đặt lịch, giao dịch thanh toán và cổng duyệt ảnh.
+- **`GET /api/admin/payments`** & **`DELETE /api/admin/payments/:id`**: Quản lý lịch sử giao dịch thanh toán.
+
+### 6.2. CRUD Đơn đặt lịch (`/api/admin/bookings`)
 - **`GET /api/admin/bookings`**: Lọc theo `ngay_chup`, `phong_chup_id`, `tho_chup_id`, `trang_thai_don`, `trang_thai_thanh_toan`, `ma_don`, `page`, `limit`.
-- **`GET /api/admin/photographers`**: Danh sách thợ chụp (`vai_tro = 'tho_chup'`).
-- **`PATCH /api/admin/bookings/:id/confirm-deposit`**: Admin duyệt cọc 30%.
-- **`PATCH /api/admin/bookings/:id/assign-photographer`**: Body `{ tho_chup_id }` (kiểm tra thợ không trùng ca).
-- **`PATCH /api/admin/bookings/:id/status`**: Body `{ trang_thai_don, ghi_chu_noi_bo? }`.
-- **`PATCH /api/admin/bookings/:id/final-payment`**: Body `{ hinh_thuc: "tien_mat" | "chuyen_khoan" }` → tất toán 70%.
-- **`POST /api/admin/albums/:donDatLichId/raw-photos`**: Upload ảnh thô (`multipart/form-data` field `photos`, tối đa 100 ảnh; hoặc JSON `{ photo_urls: [...] }`).
-- **`POST /api/admin/albums/:albumId/final-photos`**: Upload ảnh hoàn thiện (`multipart/form-data` field `photos` + `anh_album_ids?` hoặc JSON `{ items: [{ anh_album_id, url }] }`).
-- **`GET /api/admin/stats`**: Thống kê `tong_doanh_thu`, `tong_so_don`, `thong_ke_trang_thai`, `thong_ke_phong`.
-- **`POST / PATCH / DELETE /api/admin/catalog/:resource` (`/:id`)**: CRUD danh mục (`resource`: `categories` | `concepts` | `packages` | `addons` | `rooms`).
+- **`GET /api/admin/bookings/:id`**: Chi tiết đơn + thanh toán + dịch vụ thêm + album.
+- **`POST /api/admin/bookings`**: Tạo đơn trực tiếp cho khách tại quầy (`{ khach_hang_id, concept_id, goi_dich_vu_id, khung_gio_id, ngay_chup, tho_chup_id?, dich_vu_them?, da_thu_coc? }`).
+- **`PATCH` / `PUT /api/admin/bookings/:id`**: Chỉnh sửa ngày/ca chụp, phòng, gói, thợ chụp, trạng thái, ghi chú.
+- **`DELETE /api/admin/bookings/:id`**: Hủy đơn (mặc định) hoặc xóa vĩnh viễn khi truyền `?hard=true`.
+- **Nghiệp vụ nhanh**:
+  - `PATCH /api/admin/bookings/:id/confirm-deposit`: Duyệt cọc 30%.
+  - `PATCH /api/admin/bookings/:id/assign-photographer`: Body `{ tho_chup_id }` (kiểm tra thợ không trùng ca).
+  - `PATCH /api/admin/bookings/:id/status`: Body `{ trang_thai_don, ghi_chu_noi_bo? }`.
+  - `PATCH /api/admin/bookings/:id/final-payment`: Body `{ hinh_thuc: "tien_mat" | "chuyen_khoan" }` → tất toán 70%.
+
+### 6.3. CRUD Danh mục sản phẩm (`/api/admin/catalog/:resource`)
+`resource` nhận 1 trong 6 loại: `categories` | `concepts` | `packages` | `addons` | `rooms` | `time-slots`
+- **`GET /api/admin/catalog/:resource`**: Lấy tất cả bản ghi (kể cả mục đã ẩn `trang_thai = false`, lọc `?trang_thai=true/false`).
+- **`GET /api/admin/catalog/:resource/:id`**: Xem chi tiết 1 bản ghi.
+- **`POST /api/admin/catalog/:resource`**: Tạo mới (tự động sinh slug `duong_dan_*` / `ma_goi` nếu không truyền).
+- **`PATCH` / `PUT /api/admin/catalog/:resource/:id`**: Cập nhật thông tin hoặc bật/tắt `trang_thai`.
+- **`DELETE /api/admin/catalog/:resource/:id`**: Ẩn mềm (`trang_thai = false`), hoặc truyền `?hard=true` để xóa vĩnh viễn nếu chưa phát sinh đơn.
+
+### 6.4. CRUD Người dùng & Nhiếp ảnh gia (`/api/admin/users` & `/api/admin/photographers`)
+- **`GET /api/admin/users?vai_tro=&trang_thai=&q=&page=&limit=`**: Danh sách toàn bộ người dùng (`khach_hang`, `tho_chup`, `quan_tri_vien`).
+- **`GET /api/admin/users/:id`**: Chi tiết tài khoản + số đơn đã đặt / số ca chụp đã nhận.
+- **`POST /api/admin/users`**: Tạo tài khoản mới (`{ ho_ten, email, so_dien_thoai, mat_khau?, vai_tro?, anh_dai_dien? }`).
+- **`PATCH` / `PUT /api/admin/users/:id`**: Sửa thông tin, đổi vai trò, reset mật khẩu, khóa/mở khóa (`trang_thai`).
+- **`DELETE /api/admin/users/:id`**: Khóa tài khoản (`trang_thai = false`), hoặc `?hard=true` để xóa hẳn.
+- **Nhánh nhanh cho Nhiếp ảnh gia**: `GET / POST /api/admin/photographers` và `PATCH / PUT / DELETE /api/admin/photographers/:id`.
+
+### 6.5. CRUD Album & Duyệt ảnh (`/api/admin/albums`)
+- **`GET /api/admin/albums`** & **`GET /api/admin/albums/:id`**: Danh sách và chi tiết album kèm ảnh (Signed URL).
+- **`POST /api/admin/albums`**: Tạo mới album (`{ don_dat_lich_id, tieu_de?, so_anh_toi_da_duoc_chon? }`).
+- **`PATCH` / `PUT /api/admin/albums/:id`**: Sửa tiêu đề, số ảnh tối đa, trạng thái album.
+- **`DELETE /api/admin/albums/:id`**: Xóa album cùng toàn bộ ảnh trong Storage.
+- **`DELETE /api/admin/albums/:albumId/photos/:photoId`**: Xóa 1 ảnh lẻ trong album & cập nhật lại số lượng.
+- **`POST /api/admin/albums/:donDatLichId/raw-photos`** & **`POST /api/admin/albums/:albumId/final-photos`**: Upload ảnh thô và ảnh hoàn thiện.
+
+### 6.6. CRUD Mã giảm giá / Bảo lưu cọc (`/api/admin/vouchers`)
+- **`GET /api/admin/vouchers?da_su_dung=&khach_hang_id=&q=`**: Danh sách voucher toàn hệ thống.
+- **`POST /api/admin/vouchers`**: Cấp voucher mới (`{ khach_hang_id, gia_tri, ma_voucher?, so_thang_hieu_luc? }`).
+- **`PATCH` / `PUT /api/admin/vouchers/:id`**: Gia hạn, đổi giá trị hoặc trạng thái `da_su_dung`.
+- **`DELETE /api/admin/vouchers/:id`**: Xóa voucher.
